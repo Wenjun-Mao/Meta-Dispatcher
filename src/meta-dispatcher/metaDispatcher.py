@@ -1,4 +1,4 @@
-# main.py
+# src/meta-dispatcher/main.py
 import asyncio
 from typing import Dict, Any, Optional
 
