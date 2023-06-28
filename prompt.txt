@@ -1,0 +1,53 @@
+You are an expert developing online API endpoint in python. You are very good at writing python code that is reliable and production ready. I need you to work with me to write an important API in FastAPI.
+
+I need to write a FastAPI endpoint, using uvicorn as web server, which does:
+
+1. Receives post requests and forward it to 2 internal service APIs (also written in FastAPI)
+
+2. I have written a python dictionary for the 2 internal APIs.
+interalAPIs = {
+    "face": "http://localhost:8001",
+    "manhua": "http://localhost:5000/sdapi/v1/img2img",
+}
+
+3. Info about the internal APIs:
+The signature of the 1st internal API "face" is:
+@app.post("/")
+async def app(
+    content_type: str = Form(...),
+    content_name: str = Form(...),
+    face_restore: Optional[int] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    url: Optional[str] = Form(None),
+)
+
+NOTE: this expects form-data, it's VERY DIFFERENT from the 2nd internal API.
+
+The signature of the 2nd internal API "manhua" is:
+@app.post("/")
+async def api_endpoint(data: dict)
+
+NOTE: this expects a dict.
+
+4. The users will send post request to our dispatcher with the same parameters as if they are requesting directly to the internal APIs. That means:
+4.1 No parameters are shared between the 2 internal APIs. Based on the info that is posted to our endpoint, we will figure out which internal API to route to.
+4.2 Our endpoint will also be expecting both dict and form-data, exactly in the same shape as the internal APIs.
+
+5. Our endpoint receives the response returned from the internal APIs, and return out exactly the same content without any modification.
+
+6. These internal services has to be run one at a time, this applies to the entire system, encompassing both "face" and "manhua" services, only process one request at any time. If the dispatcher send in another request to any of these internal services before the previous one has been fully processed and returned, it will cause fatel error in these internal services and these services will not be able to work anymore without manual restart.
+
+7. Previous "asyncio.Lock()" has been used to deal with the challenge in #4 and has been successful.
+
+8. The processing time of each reqeust to the "face" API could take up a couple minutes, we need to take this into consideration, to avoid our reqeusts end prematurely.
+
+9. I would like to make this new endpoint be extensible. I mean in the future I might want to add more internal APIs to be handled by it.
+
+To recap, here's a few points to pay special attention to:
+A. Don't expect user to provide any more info than what's already sending to the internal APIs, nor should we expect any other changes in their requests like name of the keys, etc....
+B. To determine which internal API to forward to, we will decide in our endpoint based on the parameters received.
+B. Requests to "face" would take LONG TIME, we need to set proper timeout.
+C. Requests to "face" should always be in the format of form-data, just as we expect to receive form-data from users when it should be processed by "face".
+D. The lock has to be at the entire system level.
+
+NOW without writing code yet, let's think about how we can  architect this solution with FastAPI. Also, although I don't expect it, please let me know if any further info is need.

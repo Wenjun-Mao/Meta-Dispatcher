@@ -1,0 +1,161 @@
+To implement this API dispatcher using FastAPI, the high level strategy will be as follows:
+
+1. Create a new FastAPI application to act as the dispatcher. This application will expose an endpoint that accepts POST requests.
+
+2. In the request handler for this endpoint, parse the incoming request data to determine which internal service to forward the request to. The request body will need to include some kind of information that can be used to make this determination.
+
+3. For dispatching requests to the internal services, we can use the `httpx` library. `httpx` supports asynchronous requests and it is recommended for use with FastAPI. When dispatching a request, we will use the `async with` statement to ensure that the request is completed before we dispatch another request.
+
+4. To ensure that only one request is processed at a time, we can use a lock. In Python, we can use the `asyncio` library's `Lock` class. Before dispatching a request, we will acquire the lock with `async with lock`, and the lock will be automatically released when the request is completed.
+
+5. After dispatching a request and receiving a response, we simply return the response to the original client. We do not need to modify the response in any way.
+
+Now let's think about the implementation details:
+
+1. The signature of the dispatcher's POST endpoint will need to be flexible enough to accommodate the different parameters required by the two internal services. We might define it as follows:
+   ```python
+   @app.post("/")
+   async def dispatcher(request: Request):
+   ```
+   By using FastAPI's `Request` class, we can access the raw request data and parse it as needed.
+
+2. To determine which internal service to forward the request to, we will need to parse the request data. If we are using JSON data, we could do something like this:
+   ```python
+   data = await request.json()
+   if "content_type" in data:
+       # this is a request for the first service
+   elif "data" in data:
+       # this is a request for the second service
+   ```
+   The exact logic here will depend on the specific request data.
+
+3. To dispatch requests to the internal services, we might use `httpx` like this:
+   ```python
+   async with httpx.AsyncClient() as client:
+       response = await client.post("http://internal-service-url", data=data)
+   return Response(content=response.content, media_type=response.headers["Content-Type"])
+   ```
+   Here, `http://internal-service-url` should be replaced with the actual URL of the internal service.
+
+4. To ensure that only one request is dispatched at a time, we will use a lock:
+   ```python
+   lock = asyncio.Lock()
+
+   @app.post("/")
+   async def dispatcher(request: Request):
+       async with lock:
+           # the rest of the request handling code
+   ```
+   Here, `lock` is a global variable. We create the lock outside the request handler, so that it persists across multiple requests.
+
+This should give you an idea of how to implement the dispatcher. There are some details that will depend on your specific use case, but hopefully this provides a good starting point.
+
+
+---------------------------------
+Alright, let's start coding. First, we'll import the necessary libraries:
+
+```python
+from fastapi import FastAPI, HTTPException, Form, File, UploadFile, BackgroundTasks
+from typing import Optional
+import httpx
+import asyncio
+
+app = FastAPI()
+
+lock = asyncio.Lock()  # global lock to be used to ensure one request at a time
+```
+
+Next, let's define our POST request handler:
+
+```python
+@app.post("/")
+async def dispatch_request(
+    background_tasks: BackgroundTasks,
+    content_type: Optional[str] = Form(None),
+    content_name: Optional[str] = Form(None),
+    face_restore: Optional[int] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    url: Optional[str] = Form(None),
+    data: Optional[dict] = Form(None)
+):
+    if content_type or content_name or face_restore or file or url:
+        background_tasks.add_task(send_request, "http://localhost:8001", content_type, content_name, face_restore, file, url, data)
+    elif data:
+        background_tasks.add_task(send_request, "http://localhost:5000/sdapi/v1/img2img", content_type, content_name, face_restore, file, url, data)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid parameters")
+```
+
+Here, the `dispatch_request` function is checking the input parameters to decide which service to use. It then adds a background task to handle the request.
+
+Next, let's define the `send_request` function:
+
+```python
+async def send_request(url, content_type, content_name, face_restore, file, url_param, data):
+    async with lock:
+        if url == "http://localhost:8001":
+            # send request to the face_dispatcher service
+            async with httpx.AsyncClient() as client:
+                files = {"file": await file.read()} if file else None
+                response = await client.post(
+                    url, 
+                    data={
+                        "content_type": content_type, 
+                        "content_name": content_name, 
+                        "face_restore": face_restore, 
+                        "url": url_param
+                    },
+                    files=files
+                )
+        else:
+            # send request to the manhua service
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json={"data": data})
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
+        
+        return response.json()
+```
+
+This `send_request` function is run in the background. It first acquires the lock, then sends the request to the appropriate service, and finally releases the lock. 
+
+Please note that `httpx` was chosen because it is an async-ready HTTP library. This means it can perform HTTP requests without blocking the entire application, which is essential for the task dispatcher we're building.
+
+
+------------------------------------------------------------------
+Given the constraints you've outlined, here's a proposed architecture for this solution using FastAPI.
+
+1. **Endpoint Configuration:**
+   Our endpoint in FastAPI can be a post route ("/") which will take either form data or a JSON payload. We can use the FastAPI `Depends` function to intelligently decide which type of payload we're receiving.
+
+2. **Payload Routing:**
+   Based on the parameters received, we can determine which internal API to route to. For example, if the parameters match the signature of the "face" internal API, we route the request there. If they match the "manhua" internal API, we route it there.
+
+3. **Forwarding Requests:**
+   For forwarding requests to the internal APIs, we can use HTTPX or aiohttp. These are both excellent HTTP client libraries for Python that support async operations. 
+   When forwarding the request, we have to ensure that the formatting of the request is preserved. For instance, if the "face" API is chosen, we must send the request as form-data.
+
+4. **Handling Response:**
+   When the response is received from the internal APIs, it will be passed back to the client unmodified. 
+
+5. **Ensuring System-wide Lock:**
+   To address the constraint of one request at a time system-wide, we can use a singleton pattern to ensure that there is only one lock shared across the entire system. Before forwarding a request to an internal API, we would acquire the lock. The lock would be released once a response is received. Using `asyncio.Lock()` in this manner should ensure that only one request is in-flight at any given moment.
+
+6. **Long-Running Requests:**
+   To handle long-running requests like the ones to the "face" API, we can adjust the client timeout configuration in HTTPX or aiohttp to a higher value, such as a few minutes.
+
+7. **Extensibility:**
+   For future scalability and extensibility, the internal APIs can be abstracted out as service objects. That way, if we need to add more APIs, we can just add more service objects without having to change the main endpoint logic.
+
+Here's a rough diagram of the architecture:
+
+```
+[ Client ] --> [ FastAPI Endpoint ] -- [ Asyncio Lock ] -- > [ Internal Service API Objects ]
+```
+
+Note: To be able to handle form-data and JSON payload in the same endpoint might require some additional effort. FastAPI's dependency injection system might come in handy to resolve the proper payload type.
+
+This design is based on the information provided. If there are additional considerations or constraints, those could potentially affect the design.
+
+Please let me know if this is helpful or if you have any questions or need additional information.
