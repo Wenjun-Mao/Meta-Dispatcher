@@ -6,7 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ValidationError
 import httpx
 
-from services import FaceService, ManhuaService
+from .services import FaceService, ManhuaService
 
 app = FastAPI()
 lock = asyncio.Lock()
